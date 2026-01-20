@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import math
+import plotly.graph_objects as go
 
 # --- Helper Functions ---
 
@@ -124,6 +125,27 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
 
     return suggestions
 
+def get_stock_history_with_bollinger(ticker, days=30):
+    try:
+        stock = yf.Ticker(ticker)
+        # Fetch slightly more data to calculate moving averages properly for the start of the 30 day window
+        hist = stock.history(period=f"{days+20}d")
+        
+        if len(hist) == 0:
+            return None, "No historical data found"
+            
+        # Bollinger Bands Calculation (20-day SMA, 2 std dev)
+        hist['SMA_20'] = hist['Close'].rolling(window=20).mean()
+        hist['Std_Dev'] = hist['Close'].rolling(window=20).std()
+        hist['Upper_Band'] = hist['SMA_20'] + (hist['Std_Dev'] * 2)
+        hist['Lower_Band'] = hist['SMA_20'] - (hist['Std_Dev'] * 2)
+        
+        # Slice to requested days
+        hist = hist.tail(days)
+        return hist, None
+    except Exception as e:
+        return None, str(e)
+
 # --- Streamlit App ---
 
 st.set_page_config(page_title="Passive Income - Wheel Strategy", layout="wide")
@@ -133,6 +155,9 @@ st.markdown("""
 This tool helps you find Cash-Secured Puts to sell for income, based on the **Wheel Strategy**.
 It fetches **live data** from Yahoo Finance.
 """)
+
+if "selected_ticker" not in st.session_state:
+    st.session_state.selected_ticker = None
 
 # --- Sidebar Inputs ---
 st.sidebar.header("Strategy Parameters")
@@ -201,7 +226,10 @@ if run_btn:
             # Sort by highest Monthly ROI by default
             df = df.sort_values(by="Monthly ROI (%)", ascending=False)
             
-            st.dataframe(
+            # Interactive selection
+            st.info("Select a row in the table below to view detailed charts for that stock.")
+            
+            event = st.dataframe(
                 df.style.format({
                     "Strike": "${:.2f}",
                     "Premium": "${:.2f}",
@@ -211,9 +239,59 @@ if run_btn:
                     "Monthly ROI (%)": "{:.2f}%",
                     "Annualized ROI (%)": "{:.2f}%"
                 }),
-                use_container_width=True
+                use_container_width=True,
+                selection_mode="single-row",
+                on_select="rerun"
             )
             
+            selected_rows = event.selection.rows
+            if selected_rows:
+                selected_index = selected_rows[0]
+                selected_record = df.iloc[selected_index]
+                sel_ticker = selected_record["Symbol"]
+                sel_strike = selected_record["Strike"]
+                
+                st.markdown("---")
+                st.subheader(f"Detailed View: {sel_ticker}")
+                
+                hist_data, err = get_stock_history_with_bollinger(sel_ticker, days=90) # Show 90 days context
+                
+                if err:
+                    st.error(f"Could not load chart: {err}")
+                elif hist_data is not None:
+                     fig = go.Figure()
+
+                     # Candlestick
+                     fig.add_trace(go.Candlestick(x=hist_data.index,
+                                    open=hist_data['Open'],
+                                    high=hist_data['High'],
+                                    low=hist_data['Low'],
+                                    close=hist_data['Close'],
+                                    name='Price'))
+                     
+                     # Bollinger Bands
+                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Upper_Band'], 
+                                              line=dict(color='gray', width=1), name='Upper Band'))
+                     
+                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Lower_Band'], 
+                                              line=dict(color='gray', width=1), name='Lower Band',
+                                              fill='tonexty', fillcolor='rgba(128,128,128,0.2)'))
+                     
+                     # Strike Line
+                     fig.add_hline(y=sel_strike, line_dash="dash", line_color="red", annotation_text=f"Strike ${sel_strike}")
+
+                     fig.update_layout(
+                         title=f"{sel_ticker} Price History & Bollinger Bands (Last 90 Days)",
+                         yaxis_title="Stock Price",
+                         xaxis_title="Date",
+                         xaxis_rangeslider_visible=False,
+                         height=600
+                     )
+                     
+                     st.plotly_chart(fig, use_container_width=True)
+                     
+                     st.info(f"The red dashed line shows your potential entry price (Strike: ${sel_strike}) relative to recent price action.")
+
             st.markdown("### detailed View")
             st.info("Tip: 'Cost Basis' is your effective entry price if assigned. 'Break Even' is Strike - Premium.")
             
