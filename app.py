@@ -183,9 +183,9 @@ def get_stock_history_with_bollinger(ticker, days=30):
 
 # --- Streamlit App ---
 
-st.set_page_config(page_title="Passive Income - Wheel Strategy", layout="wide")
+st.set_page_config(page_title="Passive Income - Wheel Strategy", page_icon="💰", layout="wide")
 
-st.title("Passive Income - Wheel Strategy Analyzer")
+st.title("💰 Passive Income - Wheel Strategy Analyzer")
 st.markdown("""
 This tool helps you find Cash-Secured Puts to sell for income, based on the **Wheel Strategy**.
 It fetches **live data** from Yahoo Finance.
@@ -194,20 +194,26 @@ It fetches **live data** from Yahoo Finance.
 if "selected_ticker" not in st.session_state:
     st.session_state.selected_ticker = None
 
-# --- Sidebar Inputs ---
-st.sidebar.header("Strategy Parameters")
+# --- Strategy Parameters ---
+with st.expander("Strategy Parameters", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        capital_input = st.number_input("Available Capital ($)", min_value=1000, value=10000, step=500)
+        
+    with col2:
+        roi_target = st.number_input("Desired Monthly ROI (%)", min_value=0.1, max_value=20.0, value=1.0, step=0.1)
+        
+    with col3:
+        expiration_weeks = st.number_input("Max Expiration (Weeks)", min_value=1, max_value=12, value=4, step=1)
 
-capital_input = st.sidebar.number_input("Available Capital ($)", min_value=1000, value=10000, step=500)
-roi_target = st.sidebar.slider("Desired Monthly ROI (%)", min_value=0.5, max_value=5.0, value=1.0, step=0.1)
-expiration_weeks = st.sidebar.slider("Max Expiration (Weeks)", min_value=1, max_value=12, value=4)
+    default_tickers = "PLTR, SOFI, AMD, F, T, INTC"
+    ticker_input = st.text_area("Watchlist (comma separated)", value=default_tickers)
 
-default_tickers = "PLTR, SOFI, AMD, F, T, INTC"
-ticker_input = st.sidebar.text_area("Watchlist (comma separated)", value=default_tickers)
+    # Cleanup tickers
+    tickers = [t.strip().upper() for t in ticker_input.split(',') if t.strip()]
 
-# Cleanup tickers
-tickers = [t.strip().upper() for t in ticker_input.split(',') if t.strip()]
-
-run_btn = st.sidebar.button("Find Opportunities")
+    run_btn = st.button("Find Opportunities")
 
 if run_btn:
     if not tickers:
