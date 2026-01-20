@@ -15,16 +15,30 @@ def get_live_data(ticker_symbol):
         # Fast info is often quicker/more reliable than .info for real-time price
         current_price = stock.fast_info.last_price
         
+        # Get next earning date
+        next_earnings = "N/A"
+        try:
+            cal = stock.calendar
+            # stock.calendar is usually a dict where 'Earnings Date' is a list of date objects or a single date
+            if cal and 'Earnings Date' in cal:
+                dates = cal['Earnings Date']
+                if dates:
+                    # Handle if it's a list or single value
+                    date_val = dates[0] if isinstance(dates, list) else dates
+                    next_earnings = date_val.strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
         # Get expiration dates
         expirations = stock.options
         if not expirations:
-            return None, [], "No options data found."
+            return None, [], None, "No options data found."
             
-        return current_price, expirations, None
+        return current_price, expirations, next_earnings, None
     except Exception as e:
-        return None, [], str(e)
+        return None, [], None, str(e)
 
-def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi, max_weeks):
+def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi, max_weeks, next_earnings="N/A"):
     """
     Analyzes PUT options for the Wheel Strategy.
     """
@@ -99,6 +113,7 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
                         "Cost Basis": strike - premium,
                         "Monthly ROI (%)": round(monthly_roi_est, 2),
                         "Annualized ROI (%)": round(annualized_roi, 2),
+                        "Earnings": next_earnings,
                         "Break Even": strike - premium,
                         "Capital Req": capital_required
                     })
@@ -146,7 +161,7 @@ if run_btn:
             status_text.text(f"Analyzing {ticker}...")
             
             try:
-                current_price, expirations, error = get_live_data(ticker)
+                current_price, expirations, next_earnings, error = get_live_data(ticker)
                 
                 if error:
                     st.warning(f"Could not fetch data for {ticker}: {error}")
@@ -163,7 +178,8 @@ if run_btn:
                     expirations, 
                     capital_input, 
                     roi_target, 
-                    expiration_weeks
+                    expiration_weeks,
+                    next_earnings
                 )
                 all_suggestions.extend(ticker_suggestions)
                 
