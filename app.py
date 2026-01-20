@@ -4,8 +4,35 @@ import pandas as pd
 from datetime import datetime, timedelta
 import math
 import plotly.graph_objects as go
+from scipy.stats import norm
+import numpy as np
 
 # --- Helper Functions ---
+
+def calculate_delta(S, K, T, r, sigma, option_type='put'):
+    """
+    Calculates the Delta of an option using the Black-Scholes model.
+    S: Current Stock Price
+    K: Strike Price
+    T: Time to Expiration (in years)
+    r: Risk-Free Rate
+    sigma: Implied Volatility
+    option_type: 'call' or 'put'
+    """
+    try:
+        if T <= 0 or sigma <= 0:
+            return 0
+            
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        
+        if option_type == 'call':
+            delta = norm.cdf(d1)
+        else:
+            delta = norm.cdf(d1) - 1
+            
+        return delta
+    except Exception:
+        return 0
 
 def get_live_data(ticker_symbol):
     """
@@ -70,6 +97,7 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
             exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d')
             days_to_exp = (exp_date - today).days
             if days_to_exp <= 0: days_to_exp = 1 # avoid div by zero
+            T_years = days_to_exp / 365.0
 
             # Filter Puts
             # 1. Strike < Current Price (OTM Puts usually preferred for Wheel to acquire at discount)
@@ -85,6 +113,7 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
                 last_price = row['lastPrice']
                 bid = row['bid']
                 ask = row['ask']
+                implied_volatility = row['impliedVolatility']
                 
                 # Estimate premium (midpoint or last if bid/ask wide/missing)
                 premium = bid if bid > 0 else last_price
@@ -96,8 +125,10 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
                 total_premium = premium * 100
                 
                 # Estimate Delta if not available
-                delta_val = "N/A"
-                
+                # Use Risk Free Rate approx 4.5% (0.045)
+                delta_val = calculate_delta(current_price, strike, T_years, 0.045, implied_volatility, 'put')
+                delta_val = round(delta_val, 3)
+
                 # ROI for this specific trade duration
                 trade_roi = (total_premium / capital_required) * 100
                 
