@@ -66,7 +66,7 @@ def get_live_data(ticker_symbol):
     except Exception as e:
         return None, [], None, str(e)
 
-def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi, max_weeks, next_earnings="N/A"):
+def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi, target_weeks, next_earnings="N/A"):
     """
     Analyzes PUT options for the Wheel Strategy.
     """
@@ -75,13 +75,19 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
     tickers_analyzed_count = 0 
     
     # We'll limit the number of expiration dates to check to keep it fast
-    # Filter expirations based on max_weeks
+    # Filter expirations based on target_weeks
     valid_expirations = []
+    
+    # Calculate target window (e.g. +/- 4 days from the target week count)
+    target_days = target_weeks * 7
+    min_days = max(1, target_days - 4)
+    max_days = target_days + 4
+    
     for exp_date_str in expirations:
         try:
             exp_date = datetime.strptime(exp_date_str, '%Y-%m-%d')
             days_to_exp = (exp_date - today).days
-            if 0 < days_to_exp <= (max_weeks * 7):
+            if min_days <= days_to_exp <= max_days:
                 valid_expirations.append(exp_date_str)
         except:
             continue
@@ -205,7 +211,7 @@ with st.expander("Strategy Parameters", expanded=True):
         roi_target = st.number_input("Desired Monthly ROI (%)", min_value=0.1, max_value=20.0, value=1.0, step=0.1)
         
     with col3:
-        expiration_weeks = st.number_input("Max Expiration (Weeks)", min_value=1, max_value=12, value=4, step=1)
+        target_weeks = st.number_input("Target Expiration (Weeks)", min_value=1, max_value=12, value=4, step=1)
 
     default_tickers = "PLTR, SOFI, AMD, F, T, INTC"
     ticker_input = st.text_area("Watchlist (comma separated)", value=default_tickers)
@@ -244,7 +250,7 @@ if run_btn:
                     expirations, 
                     capital_input, 
                     roi_target, 
-                    expiration_weeks,
+                    target_weeks,
                     next_earnings
                 )
                 all_suggestions.extend(ticker_suggestions)
