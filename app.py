@@ -95,6 +95,9 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
                 capital_required = strike * 100
                 total_premium = premium * 100
                 
+                # Estimate Delta if not available
+                delta_val = "N/A"
+                
                 # ROI for this specific trade duration
                 trade_roi = (total_premium / capital_required) * 100
                 
@@ -114,6 +117,7 @@ def analyze_puts(ticker_symbol, current_price, expirations, capital, desired_roi
                         "Cost Basis": strike - premium,
                         "Monthly ROI (%)": round(monthly_roi_est, 2),
                         "Annualized ROI (%)": round(annualized_roi, 2),
+                        "Delta": delta_val, # Added placeholder
                         "Earnings": next_earnings,
                         "Break Even": strike - premium,
                         "Capital Req": capital_required
@@ -237,7 +241,8 @@ if run_btn:
                     "Break Even": "${:.2f}",
                     "Capital Req": "${:,.0f}",
                     "Monthly ROI (%)": "{:.2f}%",
-                    "Annualized ROI (%)": "{:.2f}%"
+                    "Annualized ROI (%)": "{:.2f}%",
+                    "Delta": "{}" 
                 }),
                 use_container_width=True,
                 selection_mode="single-row",
