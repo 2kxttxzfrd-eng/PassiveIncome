@@ -7,8 +7,12 @@ interface StockSuggestion {
   currentPrice: number;
   strikePrice: number;
   expirationDate: string;
+  daysToExpiration: number;
   premium: number;
   roi: number;
+  annualizedRoi: number;
+  capitalRequired: number;
+  breakEven: number;
   contract: string;
   type?: 'PUT' | 'CALL' | 'COVERED_CALL';
 }
@@ -128,7 +132,7 @@ export default function WheelStrategyForm() {
 
             <div>
               <label htmlFor="whitelist" className="block text-sm font-medium text-gray-700">
-                Watcher List (Comma separated)
+                Watchlist (Comma separated)
               </label>
               <input
                 type="text"
@@ -178,6 +182,11 @@ export default function WheelStrategyForm() {
           <h3 className="text-lg font-medium text-gray-900 mb-4">
             Suggested Trades {dataSource === 'mock' ? '(Simulated)' : ''}
           </h3>
+          {dataSource === 'mock' && (
+            <div className="mb-3 text-xs text-yellow-900 bg-yellow-50 border border-yellow-200 rounded-md px-3 py-2">
+              <strong>Simulated mode:</strong> Some rows are generated estimates (not tradable quotes). Always verify price/premium with your broker.
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -187,13 +196,17 @@ export default function WheelStrategyForm() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strike</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Exp Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">DTE</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Premium</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break-even</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cap Req</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">M. ROI</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ann. ROI</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {suggestions.map((suggestion, index) => (
-                  <tr key={index}>
+                  <tr key={index} className={dataSource === 'mock' ? 'bg-yellow-50/40' : undefined}>
                     <td className="px-4 py-4 whitespace-nowrap">
                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                              suggestion.type === 'COVERED_CALL' 
@@ -207,8 +220,12 @@ export default function WheelStrategyForm() {
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">${suggestion.strikePrice.toFixed(2)}</td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">${suggestion.currentPrice.toFixed(2)}</td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{suggestion.expirationDate}</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{suggestion.daysToExpiration}</td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">${suggestion.premium.toFixed(2)}</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">${suggestion.breakEven.toFixed(2)}</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">${suggestion.capitalRequired.toLocaleString()}</td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{suggestion.roi}%</td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{suggestion.annualizedRoi}%</td>
                   </tr>
                 ))}
               </tbody>

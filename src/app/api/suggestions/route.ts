@@ -6,8 +6,12 @@ interface StockSuggestion {
   currentPrice: number;
   strikePrice: number;
   expirationDate: string;
+  daysToExpiration: number;
   premium: number;
   roi: number; // This will be the annualized or monthly normalized ROI
+  annualizedRoi: number;
+  capitalRequired: number;
+  breakEven: number;
   contract: string;
   type: 'PUT' | 'CALL' | 'COVERED_CALL';
 }
@@ -17,6 +21,29 @@ interface SuggestionResponse {
   source: 'live' | 'mock';
   debug?: string;
 }
+
+type ErrorResponse = { error: string; details?: string };
+
+const clampNumber = (v: unknown, min: number, max: number) => {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(max, Math.max(min, n));
+};
+
+const parseSymbols = (whitelist: unknown) => {
+  const raw = typeof whitelist === 'string' ? whitelist : '';
+  const symbols = raw
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s.length > 0);
+  // De-dupe, preserve order
+  return Array.from(new Set(symbols));
+};
+
+// Very simple in-memory cache (per server process). Good enough to reduce 429s in dev/small deploys.
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const cache = globalThis as unknown as { __wheelCache?: Map<string, { ts: number; suggestions: StockSuggestion[] }> };
+if (!cache.__wheelCache) cache.__wheelCache = new Map();
 
 // Mock Data Generators
 const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: number, expirationWeeks: number, referencePrice?: number): StockSuggestion[] => {
@@ -57,6 +84,9 @@ const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: nu
           const daysToExpiration = i * 7;
           const tradeRoi = (premium / cleanStrike);
           const monthlyRoi = tradeRoi * (30 / daysToExpiration) * 100;
+          const annualizedRoi = tradeRoi * (365 / daysToExpiration) * 100;
+          const capitalRequired = cleanStrike * 100;
+          const breakEven = cleanStrike - premium;
           
           if (monthlyRoi >= desiredRoi) {
               suggestions.push({
@@ -64,8 +94,12 @@ const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: nu
                   currentPrice,
                   strikePrice: cleanStrike,
                   expirationDate: dateStr,
+                  daysToExpiration,
                   premium,
                   roi: parseFloat(monthlyRoi.toFixed(2)),
+                  annualizedRoi: parseFloat(annualizedRoi.toFixed(2)),
+                  capitalRequired: Math.round(capitalRequired),
+                  breakEven: parseFloat(breakEven.toFixed(2)),
                   contract: `Mock-${symbol}-${dateStr}-${cleanStrike}P`,
                   type: 'PUT'
               });
@@ -88,6 +122,7 @@ const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: nu
           // Return based on Share Price (Capital Locked)
           const tradeRoi = (premium / currentPrice);
           const monthlyRoi = tradeRoi * (30 / daysToExpiration) * 100;
+          const annualizedRoi = tradeRoi * (365 / daysToExpiration) * 100;
 
           if (monthlyRoi >= desiredRoi) {
               suggestions.push({
@@ -95,8 +130,12 @@ const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: nu
                   currentPrice,
                   strikePrice: cleanStrike,
                   expirationDate: dateStr,
+                  daysToExpiration,
                   premium,
                   roi: parseFloat(monthlyRoi.toFixed(2)),
+                  annualizedRoi: parseFloat(annualizedRoi.toFixed(2)),
+                  capitalRequired: Math.round(currentPrice * 100),
+                  breakEven: parseFloat((currentPrice - premium).toFixed(2)),
                   contract: `Mock-${symbol}-${dateStr}-${cleanStrike}C`,
                   type: 'COVERED_CALL'
               });
@@ -109,9 +148,32 @@ const generateMockSuggestions = (symbol: string, capital: number, desiredRoi: nu
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { capital, desiredRoi, expirationWeeks, whitelist } = body;
+    const capital = clampNumber(body?.capital, 500, 5_000_000);
+    const desiredRoi = clampNumber(body?.desiredRoi, 0, 50);
+    const expirationWeeks = clampNumber(body?.expirationWeeks, 1, 12);
+    const symbols = parseSymbols(body?.whitelist);
 
-    const symbols = whitelist.split(',').map((s: string) => s.trim().toUpperCase()).filter((s: string) => s.length > 0);
+    if (capital === null || desiredRoi === null || expirationWeeks === null) {
+      return NextResponse.json<ErrorResponse>(
+        { error: 'Invalid input', details: 'capital, desiredRoi, and expirationWeeks must be numbers within allowed ranges.' },
+        { status: 400 }
+      );
+    }
+
+    if (symbols.length === 0) {
+      return NextResponse.json<ErrorResponse>(
+        { error: 'Invalid input', details: 'Please provide at least one ticker in the watchlist.' },
+        { status: 400 }
+      );
+    }
+
+    if (symbols.length > 20) {
+      return NextResponse.json<ErrorResponse>(
+        { error: 'Too many tickers', details: 'Please limit the watchlist to 20 tickers per request.' },
+        { status: 400 }
+      );
+    }
+
     let suggestions: StockSuggestion[] = [];
 
     // Check if we should force mock data (optional env var or just fallback)
@@ -132,6 +194,13 @@ export async function POST(request: Request) {
 
         for (const symbol of symbols) {
           try {
+            const cacheKey = `${symbol}|cap=${capital}|roi=${desiredRoi}|w=${expirationWeeks}`;
+            const cached = cache.__wheelCache!.get(cacheKey);
+            if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+              suggestions = [...suggestions, ...cached.suggestions];
+              continue;
+            }
+
             console.log(`Fetching data for ${symbol}...`);
             const quote = await yahooFinance.quote(symbol) as any;
             const currentPrice = quote.regularMarketPrice || quote.bid || quote.ask || quote.regularMarketPreviousClose; // Fallback prices
@@ -145,15 +214,17 @@ export async function POST(request: Request) {
             const queryOptionsResult = await yahooFinance.options(symbol, { lang: 'en-US' }) as any;
             
             // Filter relevant expiration dates
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const relevantDates = (queryOptionsResult.expirationDates || []).filter((date: any) => {
-                return date >= minDate && date <= maxDate;
-            });
+            const expirationDatesRaw = queryOptionsResult?.expirationDates || [];
+            const relevantDates: Date[] = (expirationDatesRaw as unknown[]).map((d) => {
+              if (d instanceof Date) return d;
+              if (typeof d === 'number') return new Date(d * 1000); // yahoo often returns epoch seconds
+              if (typeof d === 'string') return new Date(d);
+              return new Date('invalid');
+            }).filter((d) => Number.isFinite(d.getTime()) && d >= minDate && d <= maxDate);
 
             console.log(`Found ${relevantDates.length} relevant expiration dates for ${symbol}`);
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            for (const date of relevantDates as any[]) {
+            for (const date of relevantDates) {
                 // Fetch detailed chain for specific date
                 const optionChain = await yahooFinance.options(symbol, { date: date }) as any;
                 
@@ -196,8 +267,12 @@ export async function POST(request: Request) {
                                currentPrice: currentPrice,
                                strikePrice: strike,
                                expirationDate: date.toISOString().split('T')[0],
+                               daysToExpiration,
                                premium: premium,
                                roi: parseFloat(monthlyRoi.toFixed(2)),
+                               annualizedRoi: parseFloat(annualizedRoi.toFixed(2)),
+                               capitalRequired: Math.round(strike * 100),
+                               breakEven: parseFloat((strike - premium).toFixed(2)),
                                contract: put.contractSymbol,
                                type: 'PUT'
                            });
@@ -230,6 +305,7 @@ export async function POST(request: Request) {
                        // (Ignoring potential capital gain from stock appreciation up to strike for simplicity, focus on income)
                        const tradeRoi = (premium / currentPrice);
                        const monthlyRoi = tradeRoi * (30 / daysToExpiration) * 100;
+                       const annualizedRoi = tradeRoi * (365 / daysToExpiration) * 100;
 
                        if (monthlyRoi >= desiredRoi) {
                            suggestions.push({
@@ -237,8 +313,12 @@ export async function POST(request: Request) {
                                currentPrice: currentPrice,
                                strikePrice: strike,
                                expirationDate: date.toISOString().split('T')[0],
+                               daysToExpiration,
                                premium: premium,
                                roi: parseFloat(monthlyRoi.toFixed(2)),
+                               annualizedRoi: parseFloat(annualizedRoi.toFixed(2)),
+                               capitalRequired: Math.round(currentPrice * 100),
+                               breakEven: parseFloat((currentPrice - premium).toFixed(2)),
                                contract: call.contractSymbol,
                                type: 'COVERED_CALL'
                            });
@@ -246,6 +326,10 @@ export async function POST(request: Request) {
                    }
                 }
             }
+
+            // Store per-symbol cached slice from this pass
+            const perSymbol = suggestions.filter((s) => s.symbol === symbol);
+            cache.__wheelCache!.set(`${symbol}|cap=${capital}|roi=${desiredRoi}|w=${expirationWeeks}`, { ts: Date.now(), suggestions: perSymbol });
 
           } catch (err) {
             console.error(`Error processing ${symbol} (using mock fallback):`, err);
